@@ -40,7 +40,7 @@ export default function NicknameInput({ onSearch, isLoading }: NicknameInputProp
 
   return (
     <div className="w-full max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-lg">
-      <h2 className="text-2xl font-bold text-gray-800 mb-4">Enter Steam Nicknames</h2>
+      <h2 className="text-2xl font-bold text-gray-800 mb-4">Enter Steam Usernames or IDs</h2>
 
       <div className="mb-4">
         <div className="flex gap-2 mb-2">
@@ -49,7 +49,7 @@ export default function NicknameInput({ onSearch, isLoading }: NicknameInputProp
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="Enter Steam ID, profile URL, or username"
+            placeholder="Enter username (e.g., mw4sanek), Steam ID, or profile URL"
             className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={isLoading}
           />
@@ -102,9 +102,17 @@ export default function NicknameInput({ onSearch, isLoading }: NicknameInputProp
         )}
       </div>
 
-      <p className="mt-4 text-sm text-gray-600">
-        You can enter Steam IDs (e.g., 76561198000000000), profile URLs, or usernames
-      </p>
+      <div className="mt-4 text-sm text-gray-600">
+        <p className="font-semibold mb-1">Supported formats:</p>
+        <ul className="list-disc list-inside space-y-1 ml-2">
+          <li><strong>Username:</strong> mw4sanek, gaben, etc.</li>
+          <li><strong>Steam ID:</strong> 76561198000000000</li>
+          <li><strong>Profile URL:</strong> https://steamcommunity.com/id/username</li>
+        </ul>
+        <p className="mt-2 text-xs text-gray-500">
+          Usernames are automatically resolved to Steam IDs by the backend.
+        </p>
+      </div>
     </div>
   );
 }

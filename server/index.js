@@ -1,8 +1,10 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -11,15 +13,18 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// Serve static files from the frontend build (only in production/Docker)
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(join(__dirname, '../dist')));
+}
+
 const STEAM_API_BASE = 'https://api.steampowered.com';
 const STEAM_STORE_API = 'https://store.steampowered.com/api';
-const STEAM_API_KEY = process.env.STEAM_API_KEY;
 
 // Helper function to make Steam API requests
 async function steamApiRequest(endpoint, params = {}) {
   const queryParams = new URLSearchParams({
     ...params,
-    ...(STEAM_API_KEY && { key: STEAM_API_KEY }),
     format: 'json',
   });
 
@@ -33,93 +38,126 @@ async function steamApiRequest(endpoint, params = {}) {
   return response.json();
 }
 
-// Helper function to resolve Steam ID from username/vanity URL
-async function resolveSteamIdFromUsername(username) {
-  if (!STEAM_API_KEY) {
-    throw new Error('Steam API key not configured');
+// Resolve Steam ID from username/vanity URL
+async function resolveSteamIdFromUsername(username, apiKey) {
+  if (!apiKey) {
+    throw new Error('Steam API key is required');
   }
 
+  console.log(`Resolving Steam ID for username: "${username}"`);
+
+  // Method 1: Try Steam API ResolveVanityURL (most reliable if vanity URL is set)
   try {
+    console.log(`  Method 1: Trying Steam API ResolveVanityURL...`);
     const data = await steamApiRequest('/ISteamUser/ResolveVanityURL/v0001/', {
+      key: apiKey,
       vanityurl: username,
     });
 
-    // Steam API returns success: 1 when found, success: 42 when not found
     if (data.response?.success === 1 && data.response?.steamid) {
-      return data.response.steamid;
+      const steamId = data.response.steamid;
+      console.log(`  ✓ Resolved via Steam API: ${steamId}`);
+      return steamId;
     } else if (data.response?.success === 42) {
-      // Vanity URL not found - try fetching profile page as fallback
-      console.log(`Vanity URL not found via API for "${username}", trying profile page...`);
-      return await resolveSteamIdFromProfilePage(username);
+      console.log(`  ✗ Steam API: Vanity URL not found, trying other methods...`);
     }
-
-    return null;
   } catch (error) {
-    console.error(`Error resolving username "${username}":`, error.message);
-    // Try profile page as fallback
-    try {
-      return await resolveSteamIdFromProfilePage(username);
-    } catch (fallbackError) {
-      throw error; // Throw original error
-    }
+    console.warn(`  ✗ Steam API resolution failed:`, error.message);
   }
-}
 
-// Fallback: Try to extract Steam ID from profile page HTML
-async function resolveSteamIdFromProfilePage(username) {
+  // Method 2: Try XML API (works even if vanity URL not set)
   try {
-    const profileUrl = `https://steamcommunity.com/id/${username}`;
+    console.log(`  Method 2: Trying Steam XML API...`);
+    const xmlUrl = `https://steamcommunity.com/id/${encodeURIComponent(username)}?xml=1`;
+    const response = await fetch(xmlUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    });
+
+    if (response.ok) {
+      const text = await response.text();
+      // Try multiple XML patterns
+      const xmlPatterns = [
+        /<steamID64>(\d{17})<\/steamID64>/i,
+        /<steamID64[^>]*>(\d{17})<\/steamID64>/i,
+        /steamID64[^>]*>(\d{17})</i,
+      ];
+
+      for (const pattern of xmlPatterns) {
+        const match = text.match(pattern);
+        if (match && match[1]) {
+          const steamId = match[1];
+          if (steamId.startsWith('7656119') && steamId.length === 17 && /^\d{17}$/.test(steamId)) {
+            console.log(`  ✓ Resolved via XML API: ${steamId}`);
+            return steamId;
+          }
+        }
+      }
+    } else if (response.status === 404) {
+      console.log(`  ✗ XML API: Profile not found (404)`);
+    }
+  } catch (error) {
+    console.warn(`  ✗ XML API resolution failed:`, error.message);
+  }
+
+  // Method 3: Try HTML scraping (fallback method)
+  try {
+    console.log(`  Method 3: Trying HTML page scraping...`);
+    const profileUrl = `https://steamcommunity.com/id/${encodeURIComponent(username)}`;
     const response = await fetch(profileUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
     });
 
-    if (!response.ok) {
-      return null;
+    if (response.ok) {
+      const html = await response.text();
+      const patterns = [
+        /"steamid"\s*:\s*"(\d{17})"/gi,
+        /g_rgProfileData\s*=\s*\{[^}]*"steamid"\s*:\s*"(\d{17})"/gi,
+        /data-steamid\s*=\s*"(\d{17})"/gi,
+        /\/profiles\/(\d{17})/g,
+        /steamid64\s*:\s*"(\d{17})"/gi,
+        /steamID64\s*:\s*"(\d{17})"/gi,
+        /steamID64["\s]*[:=]["\s]*(\d{17})/gi,
+        /href=["']\/profiles\/(\d{17})/gi,
+      ];
+
+      for (const pattern of patterns) {
+        const matches = html.matchAll(pattern);
+        for (const match of matches) {
+          if (match && match[1]) {
+            const steamId = match[1];
+            if (steamId.startsWith('7656119') && steamId.length === 17 && /^\d{17}$/.test(steamId)) {
+              console.log(`  ✓ Resolved via HTML scraping: ${steamId}`);
+              return steamId;
+            }
+          }
+        }
+      }
+    } else if (response.status === 404) {
+      console.log(`  ✗ HTML scraping: Profile not found (404)`);
     }
-
-    const html = await response.text();
-
-    // Try to extract Steam ID from various patterns in the HTML
-    // Pattern 1: "steamid":"7656119..."
-    const steamIdMatch1 = html.match(/"steamid":"(\d{17})"/);
-    if (steamIdMatch1) {
-      return steamIdMatch1[1];
-    }
-
-    // Pattern 2: g_rgProfileData = {"steamid":"7656119..."
-    const steamIdMatch2 = html.match(/g_rgProfileData\s*=\s*\{[^}]*"steamid"\s*:\s*"(\d{17})"/);
-    if (steamIdMatch2) {
-      return steamIdMatch2[1];
-    }
-
-    // Pattern 3: data-steamid="7656119..."
-    const steamIdMatch3 = html.match(/data-steamid="(\d{17})"/);
-    if (steamIdMatch3) {
-      return steamIdMatch3[1];
-    }
-
-    // Pattern 4: Look for redirect to /profiles/7656119...
-    const redirectMatch = html.match(/\/profiles\/(\d{17})/);
-    if (redirectMatch) {
-      return redirectMatch[1];
-    }
-
-    return null;
   } catch (error) {
-    console.error(`Error fetching profile page for "${username}":`, error.message);
-    return null;
+    console.warn(`  ✗ HTML scraping failed:`, error.message);
   }
+
+  console.log(`  ✗ All methods failed for username: "${username}"`);
+  return null;
 }
 
-// Resolve Steam ID from vanity URL or username
+// Resolve Steam ID endpoint
 app.post('/api/resolve-steam-id', async (req, res) => {
   try {
-    const { identifier } = req.body;
+    const { identifier, apiKey } = req.body;
 
     if (!identifier) {
       return res.status(400).json({ error: 'Identifier is required' });
+    }
+
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Steam API key is required' });
     }
 
     // Check if it's already a Steam ID (numeric)
@@ -135,34 +173,22 @@ app.post('/api/resolve-steam-id', async (req, res) => {
       }
 
       const vanityMatch = identifier.match(/\/id\/([^/]+)/);
-      if (vanityMatch && STEAM_API_KEY) {
-        // Resolve vanity URL to Steam ID
-        const data = await steamApiRequest('/ISteamUser/ResolveVanityURL/v0001/', {
-          vanityurl: vanityMatch[1],
-        });
-
-        if (data.response?.steamid) {
-          return res.json({ steamId: data.response.steamid });
-        }
-      }
-    }
-
-    // Try to resolve as vanity URL if it's a username
-    if (STEAM_API_KEY) {
-      try {
-        const steamId = await resolveSteamIdFromUsername(identifier);
+      if (vanityMatch) {
+        const steamId = await resolveSteamIdFromUsername(vanityMatch[1], apiKey);
         if (steamId) {
           return res.json({ steamId });
         }
-      } catch (error) {
-        return res.status(500).json({
-          error: `Failed to resolve username: ${error.message}`
-        });
       }
     }
 
+    // Try to resolve as username/vanity URL
+    const steamId = await resolveSteamIdFromUsername(identifier, apiKey);
+    if (steamId) {
+      return res.json({ steamId });
+    }
+
     res.status(404).json({
-      error: 'Could not resolve Steam ID. Make sure the username is a valid Steam vanity URL, or use Steam ID (numeric) or full profile URL.'
+      error: `Could not resolve Steam ID for "${identifier}". Make sure the username is correct.`
     });
   } catch (error) {
     console.error('Error resolving Steam ID:', error);
@@ -173,19 +199,18 @@ app.post('/api/resolve-steam-id', async (req, res) => {
 // Get user's game library
 app.post('/api/user-games', async (req, res) => {
   try {
-    const { steamId } = req.body;
+    const { steamId, apiKey } = req.body;
 
     if (!steamId) {
       return res.status(400).json({ error: 'Steam ID is required' });
     }
 
-    if (!STEAM_API_KEY) {
-      return res.status(500).json({
-        error: 'Steam API key not configured. Please set STEAM_API_KEY environment variable.'
-      });
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Steam API key is required' });
     }
 
     const data = await steamApiRequest('/IPlayerService/GetOwnedGames/v0001/', {
+      key: apiKey,
       steamid: steamId,
       include_appinfo: 'true',
     });
@@ -232,19 +257,18 @@ app.get('/api/game-details/:appid', async (req, res) => {
 // Batch endpoint to get games for multiple users
 app.post('/api/games-for-users', async (req, res) => {
   try {
-    const { nicknames } = req.body;
+    const { nicknames, apiKey } = req.body;
 
     if (!nicknames || !Array.isArray(nicknames) || nicknames.length === 0) {
       return res.status(400).json({ error: 'Nicknames array is required' });
     }
 
-    if (!STEAM_API_KEY) {
-      return res.status(500).json({
-        error: 'Steam API key not configured. Please set STEAM_API_KEY environment variable.'
-      });
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Steam API key is required' });
     }
 
     const gameMap = new Map();
+    const errors = [];
 
     for (const nickname of nicknames) {
       try {
@@ -252,45 +276,38 @@ app.post('/api/games-for-users', async (req, res) => {
         let steamId = null;
 
         if (/^\d+$/.test(nickname)) {
+          // Already a Steam ID
           steamId = nickname;
+          console.log(`Using Steam ID directly: ${steamId}`);
         } else if (nickname.includes('steamcommunity.com')) {
+          // Extract from profile URL
           const steamIdMatch = nickname.match(/\/profiles\/(\d+)/);
           if (steamIdMatch) {
             steamId = steamIdMatch[1];
+            console.log(`Extracted Steam ID from profile URL: ${steamId}`);
           } else {
             const vanityMatch = nickname.match(/\/id\/([^/]+)/);
             if (vanityMatch) {
-              const resolveData = await steamApiRequest('/ISteamUser/ResolveVanityURL/v0001/', {
-                vanityurl: vanityMatch[1],
-              });
-              if (resolveData.response?.steamid) {
-                steamId = resolveData.response.steamid;
-              }
+              console.log(`Resolving username from profile URL: ${vanityMatch[1]}`);
+              steamId = await resolveSteamIdFromUsername(vanityMatch[1], apiKey);
             }
           }
         } else {
-          // Try to resolve as vanity URL/username
-          try {
-            steamId = await resolveSteamIdFromUsername(nickname);
-            if (!steamId) {
-              console.warn(`Could not resolve Steam ID for username: ${nickname}`);
-              console.warn(`  - Make sure the username is a valid Steam vanity URL`);
-              console.warn(`  - Or use Steam ID (numeric) or full profile URL instead`);
-              continue;
-            }
-          } catch (error) {
-            console.error(`Error resolving username "${nickname}":`, error.message);
-            continue;
-          }
+          // Try to resolve as username/vanity URL
+          console.log(`Resolving username: ${nickname}`);
+          steamId = await resolveSteamIdFromUsername(nickname, apiKey);
         }
 
         if (!steamId) {
-          console.warn(`Could not resolve Steam ID for: ${nickname}`);
-          continue;
+          const errorMsg = `Could not resolve Steam ID for "${nickname}". Make sure the username is correct and the user has a public profile.`;
+          console.warn(errorMsg);
+          errors.push(errorMsg);
+          continue; // Skip this user but continue with others
         }
 
         // Get user's games
         const gamesData = await steamApiRequest('/IPlayerService/GetOwnedGames/v0001/', {
+          key: apiKey,
           steamid: steamId,
           include_appinfo: 'true',
         });
@@ -308,13 +325,17 @@ app.post('/api/games-for-users', async (req, res) => {
               const detailsData = await detailsResponse.json();
               const gameDetails = detailsData[game.appid.toString()]?.data;
 
+              // Get store tags (categories/genres)
+              const storeTags = gameDetails?.categories?.map((c) => c.description) ||
+                                gameDetails?.genres?.map((g) => g.description) || [];
+
               const gameWithAccounts = {
                 appid: game.appid,
                 name: game.name,
                 picture: gameDetails?.header_image ||
                   `https://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_logo_url}.jpg`,
-                tags: gameDetails?.categories?.map((c) => c.description) ||
-                      gameDetails?.genres?.map((g) => g.description) || [],
+                tags: storeTags,
+                userTags: [],
                 accounts: [],
               };
 
@@ -326,6 +347,7 @@ app.post('/api/games-for-users', async (req, res) => {
                 name: game.name,
                 picture: `https://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_logo_url}.jpg`,
                 tags: [],
+                userTags: [],
                 accounts: [],
               };
               gameMap.set(game.appid, gameWithAccounts);
@@ -338,11 +360,20 @@ app.post('/api/games-for-users', async (req, res) => {
           }
         }
       } catch (error) {
-        console.error(`Error processing user ${nickname}:`, error);
+        const errorMsg = `Error processing user "${nickname}": ${error.message || error}`;
+        console.error(errorMsg);
+        errors.push(errorMsg);
       }
     }
 
-    res.json({ games: Array.from(gameMap.values()) });
+    // Return games and any errors
+    const response = { games: Array.from(gameMap.values()) };
+    if (errors.length > 0) {
+      response.errors = errors;
+      response.warning = `${errors.length} user(s) could not be processed.`;
+    }
+
+    res.json(response);
   } catch (error) {
     console.error('Error fetching games for users:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch games' });
@@ -351,17 +382,20 @@ app.post('/api/games-for-users', async (req, res) => {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    hasApiKey: !!STEAM_API_KEY,
-  });
+  res.json({ status: 'ok' });
 });
+
+// Serve frontend for all non-API routes (only in production)
+if (process.env.NODE_ENV === 'production') {
+  app.get('*', (req, res) => {
+    res.sendFile(join(__dirname, '../dist/index.html'));
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
-  if (!STEAM_API_KEY) {
-    console.warn('⚠️  WARNING: STEAM_API_KEY not set. Some features may not work.');
-    console.warn('   Get your API key at: https://steamcommunity.com/dev/apikey');
+  if (process.env.NODE_ENV === 'production') {
+    console.log(`Frontend served from /dist`);
   }
 });
 

@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.local
+.env.production
+*.log
+.DS_Store
+.vscode
+.idea
+README.md
+SETUP.md
+CLAUDE.md
+

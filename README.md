@@ -15,6 +15,28 @@ A React frontend application that allows you to enter multiple Steam nicknames a
 
 ## Setup
 
+### Option 1: Docker (Recommended - One Command)
+
+1. Build and run with Docker:
+```bash
+docker-compose up --build
+```
+
+2. Open your browser to `http://localhost:3001`
+
+3. Enter your Steam API Key in the UI:
+   - Get your API key at https://steamcommunity.com/dev/apikey
+   - Enter it in the API key input field at the top of the page
+   - The key will be saved in your browser's localStorage
+
+The Docker setup automatically:
+- Builds the frontend
+- Runs the backend server
+- Serves the frontend from the backend
+- Everything runs on port 3001
+
+### Option 2: Local Development
+
 1. Install dependencies:
 ```bash
 npm install
@@ -24,40 +46,42 @@ npm install
    - Go to https://steamcommunity.com/dev/apikey
    - Register and get your API key
 
-3. Configure environment variables:
-   - Copy `.env.example` to `.env` (or create `.env` file)
-   - Add your Steam API key:
+3. Start both servers:
+
+   **Option A: Run both together (Recommended)**
+   ```bash
+   npm run dev:all
    ```
-   STEAM_API_KEY=your_steam_api_key_here
-   PORT=3001
+   This starts both the backend (port 3001) and frontend (port 5173) servers.
+
+   **Option B: Run separately**
+
+   Terminal 1 - Backend:
+   ```bash
+   npm run dev:server
    ```
 
-4. Start the backend server (in one terminal):
-```bash
-npm run dev:server
-```
+   Terminal 2 - Frontend:
+   ```bash
+   npm run dev
+   ```
 
-5. Start the frontend development server (in another terminal):
-```bash
-npm run dev
-```
+4. Open your browser to `http://localhost:5173`
 
-   Or run both together:
-```bash
-npm run dev:all
-```
-
-6. Open your browser to the URL shown in the terminal (usually `http://localhost:5173`)
+5. Enter your Steam API Key in the UI:
+   - Enter it in the API key input field at the top of the page
+   - The key will be saved in your browser's localStorage
+   - The key is sent to the backend server (never exposed to third parties)
 
 ## Important Notes
 
 ### Steam API Key Required
 
-This application requires a Steam API key to function. The backend server acts as a proxy to:
-- Securely store your Steam API key
-- Make API calls to Steam on behalf of the frontend
-- Handle CORS restrictions
-- Resolve Steam IDs from usernames/vanity URLs
+This application requires a Steam API key to function. The API key is:
+- Entered directly in the UI
+- Stored securely in your browser's localStorage
+- Sent to the backend server (which handles all Steam API calls)
+- Never exposed to third-party services (only used by your backend to call Steam API)
 
 ### Supported Input Formats
 
@@ -75,9 +99,10 @@ You can enter Steam accounts in multiple formats:
 
 ```
 ├── server/
-│   └── index.js       # Express backend server (Steam API proxy)
+│   └── index.js          # Express backend server (handles Steam API & CORS)
 ├── src/
-│   ├── components/       # React components
+│   ├── components/          # React components
+│   │   ├── ApiKeyInput.tsx  # API key input component
 │   │   ├── NicknameInput.tsx  # Input form for Steam nicknames
 │   │   └── GameList.tsx       # Display component for games
 │   ├── services/        # API services
@@ -85,7 +110,6 @@ You can enter Steam accounts in multiple formats:
 │   ├── types.ts         # TypeScript type definitions
 │   ├── App.tsx          # Main application component
 │   └── main.tsx         # Application entry point
-├── .env                 # Environment variables (create from .env.example)
 └── package.json         # Dependencies and scripts
 ```
 
@@ -102,20 +126,27 @@ The built files will be in the `dist` directory.
 - **Frontend**: React 18, TypeScript, Vite, Tailwind CSS
 - **Backend**: Node.js, Express, CORS
 - **API**: Steam Web API
+- **Storage**: Browser localStorage (for API key)
 
 ## Troubleshooting
 
 ### "No games found" error
 - Make sure the Steam accounts have **public game libraries**
-- Verify your Steam API key is set correctly in `.env`
-- Check that the backend server is running on port 3001
+- Verify your Steam API key is entered correctly in the UI
 - Try using Steam IDs directly (numeric format) instead of usernames
+- Check browser console for detailed error messages
 
 ### Backend connection errors
 - Ensure the backend server is running: `npm run dev:server`
-- Check that the API key is set in `.env` file
-- Verify the backend is accessible at `http://localhost:3001`
+- Check that the backend is accessible at `http://localhost:3001`
+- Verify the API proxy is configured correctly in `vite.config.ts`
 
-### CORS errors
-- The backend handles CORS automatically
-- Make sure you're accessing the frontend through Vite dev server (not file://)
+### API Key errors
+- Make sure you've entered a valid Steam API key in the UI
+- The API key is stored in localStorage - try clearing it and re-entering
+- Verify your API key is valid at https://steamcommunity.com/dev/apikey
+
+### Username resolution issues
+- The backend tries multiple methods to resolve usernames (Steam API, XML API, HTML scraping)
+- If a username doesn't resolve, try using the Steam ID instead
+- Or use the full profile URL: `https://steamcommunity.com/id/username`

@@ -24,6 +24,7 @@ export interface GameWithAccounts {
   name: string;
   picture: string;
   tags: string[];
+  userTags: string[]; // User-defined/community tags
   accounts: string[];
 }
 

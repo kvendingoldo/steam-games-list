@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import NicknameInput from './components/NicknameInput';
 import GameList from './components/GameList';
+import ApiKeyInput from './components/ApiKeyInput';
 import { GameWithAccounts } from './types';
 import { getGamesForUsers } from './services/steamApi';
 
@@ -8,6 +9,7 @@ function App() {
   const [games, setGames] = useState<GameWithAccounts[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState<string>('');
 
   const handleSearch = async (nicknames: string[]) => {
     setIsLoading(true);
@@ -16,10 +18,21 @@ function App() {
 
     try {
       const result = await getGamesForUsers(nicknames);
-      setGames(result);
 
-      if (result.length === 0) {
-        setError('No games found. Make sure the Steam IDs are valid and the accounts have public game libraries.');
+      setGames(result.games);
+
+      // Check if result has errors (from backend)
+      if (result.errors && result.errors.length > 0) {
+        const errorMessages = result.errors.join('\n');
+        if (result.games.length > 0) {
+          // Show warning but still display games
+          setError(`Warning: Some users could not be processed:\n${errorMessages}\n\nShowing games from successfully processed users.`);
+        } else {
+          // No games found, show full error
+          setError(`No games found. ${result.warning || ''}\n\nErrors:\n${errorMessages}`);
+        }
+      } else if (result.games.length === 0) {
+        setError('No games found. Make sure the usernames are valid and the accounts have public game libraries.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred while fetching games.');
@@ -42,16 +55,24 @@ function App() {
         </header>
 
         <div className="mb-8">
+          <ApiKeyInput onApiKeyChange={setApiKey} />
+        </div>
+
+        <div className="mb-8">
           <NicknameInput onSearch={handleSearch} isLoading={isLoading} />
         </div>
 
         {error && (
           <div className="w-full max-w-4xl mx-auto mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-            <p className="font-semibold">Error:</p>
-            <p>{error}</p>
-            <p className="mt-2 text-sm">
-              Make sure the backend server is running and you have set your STEAM_API_KEY in the .env file.
+            <p className="font-semibold mb-2">
+              {error.includes('Warning:') ? '⚠️ Warning:' : '❌ Error:'}
             </p>
+            <pre className="whitespace-pre-wrap text-sm font-sans">{error}</pre>
+            {!error.includes('Warning:') && (
+              <p className="mt-2 text-sm">
+                Make sure you have entered a valid Steam API key above and the backend server is running.
+              </p>
+            )}
           </div>
         )}
 
