@@ -9,7 +9,6 @@ function App() {
   const [games, setGames] = useState<GameWithAccounts[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState<string>('');
 
   const handleSearch = async (nicknames: string[]) => {
     setIsLoading(true);
@@ -55,7 +54,7 @@ function App() {
         </header>
 
         <div className="mb-8">
-          <ApiKeyInput onApiKeyChange={setApiKey} />
+          <ApiKeyInput onApiKeyChange={() => {}} />
         </div>
 
         <div className="mb-8">
