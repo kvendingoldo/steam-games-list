@@ -55,5 +55,5 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ${{ env.registry_url }}/${{ env.image_name }}:latest
-            ${{ env.registry_url }}/${{ env.image_name }}:${{ steps.set_version.outputs.safe_version }}
+            ${{ env.registry_url }}/kvendingoldo/${{ env.image_name }}:latest
+            ${{ env.registry_url }}/kvendingoldo/${{ env.image_name }}:${{ steps.set_version.outputs.safe_version }}
